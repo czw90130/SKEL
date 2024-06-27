@@ -3,3 +3,10 @@ models/
 *.egg-info
 *__pycache__/
 imgui.ini
+bioamass_v1.0.zip
+ACCAD.tar.bz2
+CNRS.tar.bz2
+skel_models_v1.1.zip
+SMPL_python_v.1.1.0.zip
+ACCAD/
+datasets/*
