@@ -129,6 +129,7 @@ class SKELOutput(ModelOutput):
     poses: Optional[Tensor] = None # 完整的姿势参数,包括全局旋转
     trans : Optional[Tensor] = None # 全局平移参数
     pose_offsets : Optional[Tensor] = None # 由姿势引起的顶点偏移量
+    joints_tpose : Optional[Tensor] = None # T姿势下的3D关节位置
     
     
 class SKEL(nn.Module):
@@ -138,7 +139,7 @@ class SKEL(nn.Module):
     """
     num_betas = 10
     
-    def __init__(self, gender, model_path=None, **kwargs):
+    def __init__(self, gender, model_path=None, custom_joint_reg_path=None, **kwargs):
         """
         初始化SKEL模型
         
@@ -192,7 +193,13 @@ class SKEL(nn.Module):
         
         # Regress the anatomical joint location with a regressor learned from BioAmass
         # 使用从BioAmass学习的回归器回归解剖学关节位置
-        self.register_buffer('J_regressor_osim', torch.FloatTensor(skel_data['J_regressor_osim']))   
+        if custom_joint_reg_path is not None:
+            J_regressor_skel = pkl.load(open(custom_joint_reg_path, 'rb'))
+            self.register_buffer('J_regressor_osim', torch.FloatTensor(J_regressor_skel))  
+            print('WARNING: Using custom joint regressor')
+        else:
+            self.register_buffer('J_regressor_osim', torch.FloatTensor(skel_data['J_regressor_osim']))
+ 
         self.register_buffer('joint_sockets', torch.FloatTensor(skel_data['joint_sockets']))
         
         self.register_buffer('per_joint_rot', torch.FloatTensor(skel_data['per_joint_rot']))
@@ -338,27 +345,36 @@ class SKEL(nn.Module):
         return param_index
         
         
-    def forward(self, poses, betas, trans, poses_type='skel', skelmesh=True):      
+    def forward(self, poses, betas, trans, poses_type='skel', skelmesh=True, dJ=None, pose_dep_bs=True):      
         """
         SKEL模型的前向传播函数
         params
-            poses : B x 46 tensor of pose parameters B x 46 张量,表示姿势参数
-            betas : B x 10 tensor of shape parameters, same as SMPL  B x 10 张量,表示形状参数,与SMPL相同
-            trans : B x 3 tensor of translation B x 3 张量,表示平移
-            poses_type : str, 'skel', should not be changed 字符串,'skel',不应改变
-            skelemesh : bool, if True, returns the skeleton vertices. The skeleton mesh is heavy so to fit on GPU memory, set to False when not needed. 布尔值,如果为True,返回骨骼顶点。骨骼网格较大,为了适应GPU内存,不需要时设为False。
+            poses : B x 46 tensor of pose parameters
+                    B x 46 张量,表示姿势参数
+            betas : B x 10 tensor of shape parameters, same as SMPL
+                    B x 10 张量,表示形状参数,与SMPL相同
+            trans : B x 3 tensor of translation
+                    B x 3 张量,表示平移
+            poses_type : str, 'skel', should not be changed
+                         字符串,'skel',不应改变
+            skelemesh : bool, if True, returns the skeleton vertices. The skeleton mesh is heavy so to fit on GPU memory, set to False when not needed.
+                        布尔值,如果为True,返回骨骼顶点。骨骼网格较大,为了适应GPU内存,不需要时设为False。
+            dJ : B x 24 x 3 tensor of the offset of the joints location from the anatomical regressor. If None, the offset is set to 0.
+                 B x 24 x 3 张量,表示关节位置相对于解剖学回归器的偏移。如果为None,偏移设为0。
+            pose_dep_bs : bool, if True (default), applies the pose dependant blend shapes. If False, the pose dependant blend shapes are not applied.
+                          布尔值,如果为True(默认),应用姿势依赖的混合形状。如果为False,则不应用姿势依赖的混合形状。
 
         return SKELOutput class with the following fields:
             SKELOutput类,包含以下字段:
-            betas: Optional[Tensor] = None # 形状参数,控制身体形状变化
-            body_pose: Optional[Tensor] = None # 身体姿势参数,不包括全局旋转
-            skin_verts: Optional[Tensor] = None  # 变形后的皮肤顶点位置
-            skel_verts: Optional[Tensor] = None # 变形后的骨骼顶点位置
-            joints: Optional[Tensor] = None # 变形后的关节位置
-            joints_ori: Optional[Tensor] = None # 关节方向,通常表示为3x3旋转矩阵
-            poses: Optional[Tensor] = None # 完整的姿势参数,包括全局旋转
-            trans : Optional[Tensor] = None # 全局平移参数
-            pose_offsets : Optional[Tensor] = None # 由姿势引起的顶点偏移量
+            betas : Bx10 tensor of shape parameters 形状参数
+            poses : Bx46 tensor of pose parameters 姿势参数
+            skin_verts : Bx6890x3 tensor of skin vertices 皮肤顶点
+            skel_verts : tensor of skeleton vertices 骨骼顶点
+            joints : Bx24x3 tensor of joints location 关节位置
+            joints_ori : Bx24x3x3 tensor of joints orientation 关节方向
+            trans : Bx3  pose dependant blend shapes offsets   平移
+            pose_offsets : Bx6080x3  pose dependant blend shapes offsets 姿势依赖的混合形状偏移
+            joints_tpose : Bx24x3 3D joints location in T pose T姿势下的3D关节位置
         
         In this function we use the following conventions:
         在此函数中,我们使用以下约定:
@@ -379,6 +395,11 @@ class SKEL(nn.Module):
         assert len(betas.shape) == 2, f"Betas should be of shape (B, {self.num_betas}), but got {betas.shape}"
         assert poses.shape[0] == betas.shape[0], f"Expected poses and betas to have the same batch size, but got {poses.shape[0]} and {betas.shape[0]}"
         assert poses.shape[0] == trans.shape[0], f"Expected poses and betas to have the same batch size, but got {poses.shape[0]} and {trans.shape[0]}"
+        
+        if dJ is not None:
+            assert len(dJ.shape) == 3, f"Expected dJ to have shape (B, {Nj}, 3), but got {dJ.shape}" 
+            assert dJ is None or dJ.shape[0] == B, f"Expected dJ to have the same batch size as poses, but got {dJ.shape[0]} and {poses.shape[0]}"
+            assert dJ.shape[1] == Nj, f"Expected dJ to have the same number of joints as the model, but got {dJ.shape[1]} and {Nj}"
         
         # Check the device of the inputs
         # 检查输入的设备
@@ -420,6 +441,9 @@ class SKEL(nn.Module):
         J = torch.einsum('bik,ji->bjk', [v_shaped, self.J_regressor_osim]) # BxJx3 # osim regressor
         # J = self.apose_transfo[:, :3, -1].view(1, Nj, 3).expand(B, -1, -1)  # Osim default pose joints location
         
+        if dJ is not None:
+            J = J + dJ
+        J_tpose = J.clone()
         
         # Local translation
         # 局部平移
@@ -539,24 +563,27 @@ class SKEL(nn.Module):
         G = torch.stack(G, dim=1)
         
         # ------- Pose dependant blend shapes 姿态相关混合形状 ----------
-        # Note : Those should be retrained for SKEL as the SKEL joints location are different from SMPL.
-        # 注意:这些应该为SKEL重新训练,因为SKEL关节位置与SMPL不同。
-        # But the current version lets use get decent pose dependant deformations for the shoulders, belly and knies
-        # 但当前版本让我们为肩膀、腹部和膝盖获得不错的姿态相关变形
-        ident = torch.eye(3, dtype=v_shaped.dtype, device=device)
-        
-        # We need the per SMPL joint bone transform to compute pose dependant blend shapes.
-        # 我们需要每个SMPL关节的骨骼变换来计算姿态相关混合形状
-        # Initialize each joint rotation with identity
-        # 用单位矩阵初始化每个关节旋转
-        Rsmpl = ident.unsqueeze(0).unsqueeze(0).expand(B, self.num_joints_smpl, -1, -1) # BxNjx3x3 
-        
-        Rskin = G_[:, :, :3, :3] # BxNjx3x3
-        Rsmpl[:, smpl_joint_corresp] = Rskin.clone()[:] # BxNjx3x3 pose params to rotation 姿态参数到旋转
-        pose_feature = Rsmpl[:, 1:].view(B, -1, 3, 3) - ident
-        pose_offsets = torch.matmul(pose_feature.view(B, -1),
-                                    self.posedirs.view(Ns*3, -1).T).view(B, -1, 3)
-        v_shaped_pd = v_shaped + pose_offsets
+        if pose_dep_bs is False:
+                v_shaped_pd = v_shaped
+        else:
+            # Note : Those should be retrained for SKEL as the SKEL joints location are different from SMPL.
+            # 注意:这些应该为SKEL重新训练,因为SKEL关节位置与SMPL不同。
+            # But the current version lets use get decent pose dependant deformations for the shoulders, belly and knies
+            # 但当前版本让我们为肩膀、腹部和膝盖获得不错的姿态相关变形
+            ident = torch.eye(3, dtype=v_shaped.dtype, device=device)
+            
+            # We need the per SMPL joint bone transform to compute pose dependant blend shapes.
+            # 我们需要每个SMPL关节的骨骼变换来计算姿态相关混合形状
+            # Initialize each joint rotation with identity
+            # 用单位矩阵初始化每个关节旋转
+            Rsmpl = ident.unsqueeze(0).unsqueeze(0).expand(B, self.num_joints_smpl, -1, -1) # BxNjx3x3 
+            
+            Rskin = G_[:, :, :3, :3] # BxNjx3x3
+            Rsmpl[:, smpl_joint_corresp] = Rskin.clone()[:] # BxNjx3x3 pose params to rotation 姿态参数到旋转
+            pose_feature = Rsmpl[:, 1:].view(B, -1, 3, 3) - ident
+            pose_offsets = torch.matmul(pose_feature.view(B, -1),
+                                        self.posedirs.view(Ns*3, -1).T).view(B, -1, 3)
+            v_shaped_pd = v_shaped + pose_offsets
           
         
         ##########################################################################################
@@ -661,7 +688,8 @@ class SKEL(nn.Module):
                             betas=betas,
                             poses=poses,
                             trans = trans,
-                            pose_offsets = pose_offsets)
+                            pose_offsets = pose_offsets,
+                            joints_tpose = J_tpose)
 
         return output
 
