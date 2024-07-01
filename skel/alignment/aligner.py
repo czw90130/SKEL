@@ -22,7 +22,15 @@ import skel.config as cg
 from skel.skel_model import SKEL
 
 def compute_scapula_loss(poses):
+    """
+    计算肩胛骨姿势的损失
     
+    参数:
+    poses: 姿势参数张量
+    
+    返回:
+    scapula_loss: 肩胛骨姿势的L2范数损失
+    """
     scapula_indices = [26, 27, 28, 36, 37, 38]
     
     scapula_poses = poses[:, scapula_indices]
@@ -30,24 +38,51 @@ def compute_scapula_loss(poses):
     return scapula_loss
 
 def compute_spine_loss(poses):
+    """
+    计算脊柱姿势的损失
     
-    spine_indices = range(17, 25)
+    参数:
+    poses: 姿势参数张量
+    
+    返回:
+    spine_loss: 脊柱姿势的L2范数损失
+    """
+    spine_indices = range(17, 25)  # 脊柱相关的关节索引
     
     spine_poses = poses[:, spine_indices]
     spine_loss = torch.linalg.norm(spine_poses, ord=2)
     return spine_loss
 
+# 计算整体姿势损失
 def compute_pose_loss(poses):
+    """
+    计算整体姿势的损失（不包括全局旋转）
     
-    pose_loss = torch.linalg.norm(poses[:, 3:], ord=2) # The global rotation should not be constrained
+    参数:
+    poses: 姿势参数张量
+    
+    返回:
+    pose_loss: 整体姿势的L2范数损失
+    """
+    pose_loss = torch.linalg.norm(poses[:, 3:], ord=2) # The global rotation should not be constrained 不约束全局旋转
     return pose_loss
 
+# 计算时间连续性损失
 def compute_time_loss(poses):
+    """
+    计算相邻帧之间姿势变化的损失
     
+    参数:
+    poses: 姿势参数张量
+    
+    返回:
+    time_loss: 相邻帧姿势差异的L2范数损失
+    """
     pose_delta = poses[1:] - poses[:-1]
     time_loss = torch.linalg.norm(pose_delta, ord=2)
     return time_loss
 
+# 优化函数
 def optim(params, 
           poses,
           betas,
@@ -63,6 +98,28 @@ def optim(params,
           watch_frame=0,
           pose_reg_factor = 1e1,
           ):
+        """
+        优化SKEL模型参数以匹配目标顶点
+        
+        参数:
+        params: 需要优化的参数列表
+        poses: 姿势参数
+        betas: 体型参数
+        trans: 平移参数
+        verts: 目标顶点
+        skel_model: SKEL模型
+        device: 计算设备
+        lr: 学习率
+        max_iter: 每步最大迭代次数
+        num_steps: 优化步数
+        line_search_fn: 线搜索函数
+        rot_only: 是否只优化旋转
+        watch_frame: 可视化的帧索引
+        pose_reg_factor: 姿势正则化因子
+        
+        返回:
+        无返回值，直接修改输入参数
+        """
     
         # poseLoss = PoseLimitLoss().to(device)
         
@@ -154,11 +211,21 @@ def optim(params,
             with torch.no_grad():
                 poses[:] = torch.atan2(poses.sin(), poses.cos())
             pbar.set_postfix_str(f"Loss {loss:.4f}")
-
+            
+# SKEL拟合器类
 class SkelFitter(object):
-    
+    """
+    用于将SKEL模型拟合到SMPL序列的类
+    """
     def __init__(self, gender, device, num_betas=10) -> None:
-
+        """
+        初始化SkelFitter
+        
+        参数:
+        gender: 性别 ('male' 或 'female')
+        device: 计算设备
+        num_betas: beta参数的数量
+        """
         self.smpl = smplx.create(cg.smpl_folder, model_type='smpl', gender=gender, num_betas=num_betas, batch_size=1).to(device)
         self.skel = SKEL(gender).to(device)
         self.gender = gender
@@ -170,7 +237,24 @@ class SkelFitter(object):
             debug=False,
             watch_frame=0,
             freevert_mesh=None):
-        """Align SKEL to a SMPL sequence."""
+        """Align SKEL to a SMPL sequence.
+
+        将SKEL模型拟合到SMPL序列
+        
+        参数:
+        trans_in: 输入的平移参数
+        betas_in: 输入的体型参数
+        poses_in: 输入的姿势参数
+        batch_size: 批处理大小
+        skel_data_init: 初始SKEL数据（如果有）
+        force_recompute: 是否强制重新计算
+        debug: 是否开启调试模式
+        watch_frame: 可视化的帧索引
+        freevert_mesh: 自由顶点网格（如果有）
+        
+        返回:
+        res_dict: 包含拟合结果的字典
+        """
 
         # Optimization params
         init_optim_params = {'lr': 1e0, 'max_iter': 25, 'num_steps': 10}
@@ -273,9 +357,17 @@ class SkelFitter(object):
                 
         return res_dict
             
-
+# 加载SMPL序列数据
 def load_smpl_seq(smpl_seq_path):
-
+    """
+    从文件加载SMPL序列数据
+    
+    参数:
+    smpl_seq_path: SMPL序列文件路径（.pkl 或 .npz）
+    
+    返回:
+    out_dict: 包含SMPL数据的字典
+    """
     if not os.path.exists(smpl_seq_path):
         raise Exception('Path does not exist: {}'.format(smpl_seq_path))
     
