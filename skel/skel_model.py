@@ -148,7 +148,7 @@ class SKEL(nn.Module):
         
         # Indices of bones which orientation should not vary with beta in T pose:
         joint_idx_fixed_beta = [0, 5, 10, 13, 18, 23]
-        self.register_buffer('joint_idx_fixed_beta', torch.IntTensor(joint_idx_fixed_beta))                   
+        self.register_buffer('joint_idx_fixed_beta', torch.tensor(joint_idx_fixed_beta, dtype=torch.long))                   
         
         id_to_col = {self.kintree_table[1, i].item(): i for i in range(self.kintree_table.shape[1])}
         self.register_buffer('parent', torch.LongTensor(
