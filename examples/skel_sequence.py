@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Copyright (C) 2024  MPI IS, Marilyn Keller
 import argparse
 import os
@@ -127,4 +126,3 @@ if __name__ == "__main__":
     
     v.run_animations = True 
     v.run()
->>>>>>> af881e69f6d818f5e077c301777d0db73bb6fbdf
