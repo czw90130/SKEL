@@ -25,9 +25,19 @@ from skel.skel_model import SKEL
 
 
 class SkelFitter(object):
+    """
+    用于将SKEL模型拟合到SMPL序列的类
+    """
     
     def __init__(self, gender, device, num_betas=10, export_meshes=False) -> None:
-
+        """
+        初始化SkelFitter
+        
+        参数:
+        gender: 性别 ('male' 或 'female')
+        device: 计算设备
+        num_betas: beta参数的数量
+        """
         self.smpl = smplx.create(cg.smpl_folder, model_type='smpl', gender=gender, num_betas=num_betas, batch_size=1, export_meshes=False).to(device)
         self.skel = SKEL(gender).to(device)
         self.gender = gender
@@ -114,8 +124,22 @@ class SkelFitter(object):
             debug=False,
             watch_frame=0,
             freevert_mesh=None):
-        """Align SKEL to a SMPL sequence."""
-
+        """Align SKEL to a SMPL sequence.
+        参数:
+        将SKEL模型拟合到SMPL序列
+        trans_in: 输入的平移参数
+        betas_in: 输入的体型参数
+        poses_in: 输入的姿势参数
+        batch_size: 批处理大小
+        skel_data_init: 初始SKEL数据（如果有）
+        force_recompute: 是否强制重新计算
+        debug: 是否开启调试模式
+        watch_frame: 可视化的帧索引
+        freevert_mesh: 自由顶点网格（如果有）
+        
+        返回:
+        res_dict: 包含拟合结果的字典
+        """
         self.nb_frames = poses_in.shape[0]
         self.watch_frame = watch_frame
         
@@ -169,7 +193,7 @@ class SkelFitter(object):
             # self.fit_batch()
             # SMPL params
             poses_smpl = to_torch(poses_in[i_start:i_end].copy())
-            betas_smpl = to_torch(betas_in[i_start:i_end].copy())
+            betas_smpl = to_torch(betas_in[:self.num_betas].copy()).expand(i_end-i_start, -1)
             trans_smpl = to_torch(trans_in[i_start:i_end].copy())
             
             # Run a SMPL forward pass to get the SMPL body vertices

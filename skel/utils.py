@@ -21,14 +21,12 @@
 
 import torch
 
-
-
-
 def build_homog_matrix(R, t=None):
     """ Create a homogeneous matrix from rotation matrix and translation vector
-    @ R: rotation matrix of shape (B, Nj, 3, 3)
-    @ t: translation vector of shape (B, Nj, 3, 1)
-    returns: homogeneous matrix of shape (B, 4, 4)
+    从旋转矩阵和平移向量创建齐次矩阵
+    @ R: rotation matrix of shape (B, Nj, 3, 3)    旋转矩阵
+    @ t: translation vector of shape (B, Nj, 3, 1)    平移向量
+    returns: homogeneous matrix of shape (B, 4, 4)    齐次矩阵
     By Marilyn Keller
     """
     
@@ -49,14 +47,19 @@ def build_homog_matrix(R, t=None):
     assert R.shape == (B, Nj, 3, 3), f"R.shape: {R.shape}"
     assert t.shape == (B, Nj, 3, 1), f"t.shape: {t.shape}"
     
-    G = torch.cat([R, t], dim=-1) # BxJx3x4 local transformation matrix
+    G = torch.cat([R, t], dim=-1) # BxJx3x4 local transformation matrix 局部变换矩阵
     pad_row = torch.FloatTensor([0, 0, 0, 1]).to(R.device).view(1, 1, 1, 4).expand(B, Nj, -1, -1) # BxJx1x4
-    G = torch.cat([G, pad_row], dim=2) # BxJx4x4 padded to be 4x4 matrix an enable multiplication for the kinematic chain
+    G = torch.cat([G, pad_row], dim=2) # BxJx4x4 padded to be 4x4 matrix an enable multiplication for the kinematic chain 填充为4x4矩阵，以便进行运动链的乘法运算
 
     return G
 
 
 def matmul_chain(rot_list):
+    """
+    计算旋转矩阵列表的连乘结果
+    :param rot_list: 旋转矩阵列表
+    :return: 连乘结果
+    """
     
     R_tot = rot_list[-1]
     for i in range(len(rot_list)-2,-1,-1):
@@ -67,12 +70,14 @@ def matmul_chain(rot_list):
 def rotation_6d_to_matrix(d6: torch.Tensor) -> torch.Tensor:
     """
     Converts 6D rotation representation by Zhou et al. [1] to rotation matrix
+    将Zhou等人[1]提出的6D旋转表示转换为旋转矩阵
     using Gram--Schmidt orthogonalization per Section B of [1].
+    使用[1]中B节描述的Gram-Schmidt正交化方法。
     Args:
-        d6: 6D rotation representation, of size (*, 6)
+        d6: 6D rotation representation, of size (*, 6)    6D旋转表示
 
     Returns:
-        batch of rotation matrices of size (*, 3, 3)
+        batch of rotation matrices of size (*, 3, 3)    批量旋转矩阵
 
     [1] Zhou, Y., Barnes, C., Lu, J., Yang, J., & Li, H.
     On the Continuity of Rotation Representations in Neural Networks.
@@ -90,12 +95,14 @@ def rotation_6d_to_matrix(d6: torch.Tensor) -> torch.Tensor:
 
 def rotation_matrix_from_vectors(vec1, vec2):
     """ Find the rotation matrix that aligns vec1 to vec2
-    :param vec1: A 3d "source" vector (B x Nj x 3)
-    :param vec2: A 3d "destination" vector (B x Nj x 3)
-    :return mat: A rotation matrix (B x Nj x 3 x 3) which when applied to vec1, aligns it with vec2.
+    找到将vec1对齐到vec2的旋转矩阵
+    :param vec1: A 3d "source" vector (B x Nj x 3)    3D"源"向量
+    :param vec2: A 3d "destination" vector (B x Nj x 3)    3D"目标"向量
+    :return mat: A rotation matrix (B x Nj x 3 x 3) which when applied to vec1, aligns it with vec2. 旋转矩阵 (B x Nj x 3 x 3), 当应用于vec1时, 将其与vec2对齐
     """
     for v_id, v in enumerate([vec1, vec2]):
         # vectors shape should be B x Nj x 3
+        # 向量形状应为 B x Nj x 3
         assert len(v.shape) == 3, f"Vectors {v_id} shape should be B x Nj x 3, got {v.shape}"
         assert v.shape[-1] == 3, f"Vectors {v_id} shape should be B x Nj x 3, got {v.shape}" 
     
@@ -107,6 +114,7 @@ def rotation_matrix_from_vectors(vec1, vec2):
     b = vec2 / torch.linalg.norm(vec2,  dim=-1, keepdim=True)
     v = torch.cross(a, b, dim=-1)
     # Compute the dot product along the last dimension of a and b
+    # 计算a和b最后一个维度的点积
     c = torch.sum(a * b, dim=-1)
     s = torch.linalg.norm(v, dim=-1) + torch.finfo(float).eps
     v0 = torch.zeros_like(v[...,0], device=device).unsqueeze(-1) 
@@ -114,6 +122,7 @@ def rotation_matrix_from_vectors(vec1, vec2):
     kmat_l2 = torch.cat([v[...,2].unsqueeze(-1), v0, -v[...,0].unsqueeze(-1)], dim=-1)
     kmat_l3 = torch.cat([-v[...,1].unsqueeze(-1), v[...,0].unsqueeze(-1), v0], dim=-1)
     # Stack the matrix lines along a the -2 dimension
+     # 沿-2维度堆叠矩阵行
     kmat = torch.cat([kmat_l1.unsqueeze(-2), kmat_l2.unsqueeze(-2), kmat_l3.unsqueeze(-2)], dim=-2) # B x Nj x 3 x 3
     # import ipdb; ipdb.set_trace()
     rotation_matrix = torch.eye(3, device=device).view(1,1,3,3).expand(B, Nj, 3, 3) + kmat + torch.matmul(kmat, kmat) * ((1 - c) / (s ** 2)).view(B, Nj, 1, 1).expand(B, Nj, 3, 3)
@@ -123,9 +132,11 @@ def rotation_matrix_from_vectors(vec1, vec2):
 def quat_feat(theta):
     '''
         Computes a normalized quaternion ([0,0,0,0]  when the body is in rest pose)
+        计算归一化四元数（当身体处于静止姿势时为[0,0,0,0]）
         given joint angles
-    :param theta: A tensor of joints axis angles, batch size x number of joints x 3
-    :return:
+        给定关节角度
+    :param theta: A tensor of joints axis angles, batch size x number of joints x 3 关节轴角度张量，batch size x 关节数量 x 3
+    :return: A tensor of quaternions, batch size x number of joints x 4 四元数张量，batch size x 关节数量 x 4
     '''
     l1norm = torch.norm(theta + 1e-8, p=2, dim=1)
     angle = torch.unsqueeze(l1norm, -1)
@@ -139,8 +150,9 @@ def quat_feat(theta):
 def quat2mat(quat):
     '''
         Converts a quaternion to a rotation matrix
-    :param quat:
-    :return:
+        将四元数转换为旋转矩阵
+    :param quat: 四元数
+    :return: 旋转矩阵
     '''
     norm_quat = quat
     norm_quat = norm_quat / norm_quat.norm(p=2, dim=1, keepdim=True)
@@ -158,6 +170,7 @@ def quat2mat(quat):
 def rodrigues(theta):
     '''
         Computes the rodrigues representation given joint angles
+        计算给定关节角度的罗德里格斯表示
 
     :param theta: batch_size x number of joints x 3
     :return: batch_size x number of joints x 3 x 4
@@ -175,6 +188,7 @@ def rodrigues(theta):
 def with_zeros(input):
     '''
       Appends a row of [0,0,0,1] to a batch size x 3 x 4 Tensor
+      将一行 [0,0,0,1] 附加到 batch size x 3 x 4 的张量上
 
     :param input: A tensor of dimensions batch size x 3 x 4
     :return: A tensor batch size x 4 x 4 (appended with 0,0,0,1)
@@ -188,60 +202,39 @@ def with_zeros(input):
 
 def with_zeros_44(input):
     '''
-      Appends a row of [0,0,0,1] to a batch size x 3 x 4 Tensor
+      Appends a column of [0,0,0] and a row of [0,0,0,1] to a batch size x 3 x 3 Tensor
+      将一列 [0,0,0] 和一行 [0,0,0,1] 附加到 batch size x 3 x 3 的张量上
 
-    :param input: A tensor of dimensions batch size x 3 x 4
-    :return: A tensor batch size x 4 x 4 (appended with 0,0,0,1)
+    :param input: A tensor of dimensions batch size x 3 x 3
+    :return: A tensor batch size x 4 x 4 (appended with [0,0,0] column and [0,0,0,1] row)
     '''
     import ipdb; ipdb.set_trace()
     batch_size  = input.shape[0]
+    
+    # Append a column of zeros
     col_append  = torch.FloatTensor(([[[[0.0, 0.0, 0.0]]]])).to(input.device)
     padded_tensor = torch.cat([input, col_append], dim=-1)
        
-    row_append     = torch.FloatTensor(([0.0, 0.0, 0.0, 1.0])).to(input.device)
-    row_append.requires_grad = False
-    padded_tensor     = torch.cat([input, row_append.view(1, 1, 4).repeat(batch_size, 1, 1)], 1)
-    return padded_tensor
-    
-
-    
-    return padded_tensor
-
-def vector_to_rot():
-    
-    def rotation_matrix(A,B):
-    # Aligns vector A to vector B
-
-        ax = A[0]
-        ay = A[1]
-        az = A[2]
-
-        bx = B[0]
-        by = B[1]
-        bz = B[2]
-
-        au = A/(torch.sqrt(ax*ax + ay*ay + az*az))
-        bu = B/(torch.sqrt(bx*bx + by*by + bz*bz))
-
-        R=torch.tensor([[bu[0]*au[0], bu[0]*au[1], bu[0]*au[2]], [bu[1]*au[0], bu[1]*au[1], bu[1]*au[2]], [bu[2]*au[0], bu[2]*au[1], bu[2]*au[2]] ])
-
-
-        return(R)
-    
-    
+    # Use with_zeros to append the final row
+    return with_zeros(padded_tensor)   
     
 def axis_angle_to_matrix(axis_angle: torch.Tensor) -> torch.Tensor:
     """
     Convert rotations given as axis/angle to rotation matrices.
+    将以轴角形式给出的旋转转换为旋转矩阵。
 
     Args:
         axis_angle: Rotations given as a vector in axis angle form,
             as a tensor of shape (..., 3), where the magnitude is
             the angle turned anticlockwise in radians around the
             vector's direction.
+        axis_angle: 以轴角形式给出的旋转向量,
+            形状为 (..., 3) 的张量,其中大小是
+            围绕向量方向逆时针旋转的弧度角。
 
     Returns:
         Rotation matrices as tensor of shape (..., 3, 3).
+        形状为 (..., 3, 3) 的旋转矩阵张量。
     """
     return quaternion_to_matrix(axis_angle_to_quaternion(axis_angle))
 
@@ -249,15 +242,20 @@ def axis_angle_to_matrix(axis_angle: torch.Tensor) -> torch.Tensor:
 def axis_angle_to_quaternion(axis_angle: torch.Tensor) -> torch.Tensor:
     """
     Convert rotations given as axis/angle to quaternions.
+    将以轴角形式给出的旋转转换为四元数。
 
     Args:
         axis_angle: Rotations given as a vector in axis angle form,
             as a tensor of shape (..., 3), where the magnitude is
             the angle turned anticlockwise in radians around the
             vector's direction.
+        axis_angle: 以轴角形式给出的旋转向量,
+            形状为 (..., 3) 的张量,其中大小是
+            围绕向量方向逆时针旋转的弧度角。
 
     Returns:
         quaternions with real part first, as tensor of shape (..., 4).
+        实部在前的四元数,形状为 (..., 4) 的张量。
     """
     angles = torch.norm(axis_angle, p=2, dim=-1, keepdim=True)
     half_angles = angles * 0.5
@@ -268,7 +266,9 @@ def axis_angle_to_quaternion(axis_angle: torch.Tensor) -> torch.Tensor:
         torch.sin(half_angles[~small_angles]) / angles[~small_angles]
     )
     # for x small, sin(x/2) is about x/2 - (x/2)^3/6
+    # 对于小的x, sin(x/2)约等于x/2 - (x/2)^3/6
     # so sin(x/2)/x is about 1/2 - (x*x)/48
+    # 所以sin(x/2)/x约等于1/2 - (x*x)/48
     sin_half_angles_over_angles[small_angles] = (
         0.5 - (angles[small_angles] * angles[small_angles]) / 48
     )
@@ -280,13 +280,14 @@ def axis_angle_to_quaternion(axis_angle: torch.Tensor) -> torch.Tensor:
 def quaternion_to_matrix(quaternions: torch.Tensor) -> torch.Tensor:
     """
     Convert rotations given as quaternions to rotation matrices.
+    将以四元数形式给出的旋转转换为旋转矩阵。
 
     Args:
-        quaternions: quaternions with real part first,
+        quaternions: quaternions with real part first,    实部在前的四元数
             as tensor of shape (..., 4).
 
     Returns:
-        Rotation matrices as tensor of shape (..., 3, 3).
+        Rotation matrices as tensor of shape (..., 3, 3).    旋转矩阵张量
     """
     r, i, j, k = torch.unbind(quaternions, -1)
     two_s = 2.0 / (quaternions * quaternions).sum(-1)
@@ -311,14 +312,16 @@ def quaternion_to_matrix(quaternions: torch.Tensor) -> torch.Tensor:
 def axis_angle_rotation(axis: str, angle: torch.Tensor) -> torch.Tensor:
     """
     Return the rotation matrices for one of the rotations about an axis
+    返回欧拉角描述的绕某个轴旋转的旋转矩阵,
     of which Euler angles describe, for each value of the angle given.
+    对于给定角度的每个值。
 
     Args:
         axis: Axis label "X" or "Y or "Z".
-        angle: any shape tensor of Euler angles in radians
+        angle: any shape tensor of Euler angles in radians    任意形状的欧拉角张量,单位为弧度
 
     Returns:
-        Rotation matrices as tensor of shape (..., 3, 3).
+        Rotation matrices as tensor of shape (..., 3, 3).    旋转矩阵张量
     """
 
     cos = torch.cos(angle)
@@ -341,15 +344,19 @@ def axis_angle_rotation(axis: str, angle: torch.Tensor) -> torch.Tensor:
 def axis_angle_to_matrix(axis_angle: torch.Tensor) -> torch.Tensor:
     """
     Convert rotations given as axis/angle to rotation matrices.
+    将以轴角形式给出的旋转转换为旋转矩阵。
 
     Args:
         axis_angle: Rotations given as a vector in axis angle form,
             as a tensor of shape (..., 3), where the magnitude is
             the angle turned anticlockwise in radians around the
             vector's direction.
+        axis_angle: 以轴角形式给出的旋转向量,
+            形状为 (..., 3) 的张量,其中大小是
+            围绕向量方向逆时针旋转的弧度角。
 
     Returns:
-        Rotation matrices as tensor of shape (..., 3, 3).
+        Rotation matrices as tensor of shape (..., 3, 3).    旋转矩阵张量
     """
     return quaternion_to_matrix(axis_angle_to_quaternion(axis_angle))
 
@@ -357,14 +364,15 @@ def axis_angle_to_matrix(axis_angle: torch.Tensor) -> torch.Tensor:
 def euler_angles_to_matrix(euler_angles: torch.Tensor, convention: str) -> torch.Tensor:
     """
     Convert rotations given as Euler angles in radians to rotation matrices.
+    将以弧度表示的欧拉角旋转转换为旋转矩阵。
 
     Args:
-        euler_angles: Euler angles in radians as tensor of shape (..., 3).
-        convention: Convention string of three uppercase letters from
+        euler_angles: Euler angles in radians as tensor of shape (..., 3).    弧度制欧拉角张量
+        convention: Convention string of three uppercase letters from    由三个大写字母XYZ组成的约定字符串
             {"X", "Y", and "Z"}.
 
     Returns:
-        Rotation matrices as tensor of shape (..., 3, 3).
+        Rotation matrices as tensor of shape (..., 3, 3).    旋转矩阵张量
     """
     if euler_angles.dim() == 0 or euler_angles.shape[-1] != 3:
         raise ValueError("Invalid input euler angles.")
@@ -386,14 +394,17 @@ def euler_angles_to_matrix(euler_angles: torch.Tensor, convention: str) -> torch
 def _axis_angle_rotation(axis: str, angle: torch.Tensor) -> torch.Tensor:
     """
     Return the rotation matrices for one of the rotations about an axis
+    返回欧拉角描述的绕某个轴旋转的旋转矩阵,
     of which Euler angles describe, for each value of the angle given.
+    对于给定角度的每个值。
 
     Args:
         axis: Axis label "X" or "Y or "Z".
         angle: any shape tensor of Euler angles in radians
+               任意形状的欧拉角张量,单位为弧度
 
     Returns:
-        Rotation matrices as tensor of shape (..., 3, 3).
+        Rotation matrices as tensor of shape (..., 3, 3).    旋转矩阵张量
     """
 
     cos = torch.cos(angle)
@@ -415,14 +426,17 @@ def _axis_angle_rotation(axis: str, angle: torch.Tensor) -> torch.Tensor:
 
 def location_to_spheres(loc, color=(1,0,0), radius=0.02):
     """Given an array of 3D points, return a list of spheres located at those positions.
+       给定一个3D点的数组,返回位于这些位置的球体列表。
 
     Args:
-        loc (numpy.array): Nx3 array giving 3D positions
+        loc (numpy.array): Nx3 array giving 3D positions    给出3D位置
         color (tuple, optional): One RGB float color vector to color the spheres. Defaults to (1,0,0).
+                                 一个RGB浮点颜色向量,用于给球体上色
         radius (float, optional): Radius of the spheres in meters. Defaults to 0.02.
+                                  球体的半径,单位为米。
 
     Returns:
-        list: List of spheres Mesh
+        list: List of spheres Mesh    球体网格列表
     """
     from psbody.mesh.sphere import Sphere
     import numpy as np

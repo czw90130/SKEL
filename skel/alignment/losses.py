@@ -1,7 +1,15 @@
 import torch
 
 def compute_scapula_loss(poses):
+    """
+    计算肩胛骨姿势的损失
     
+    参数:
+    poses: 姿势参数张量
+    
+    返回:
+    scapula_loss: 肩胛骨姿势的L2范数损失
+    """
     scapula_indices = [26, 27, 28, 36, 37, 38]
     
     scapula_poses = poses[:, scapula_indices]
@@ -9,7 +17,15 @@ def compute_scapula_loss(poses):
     return scapula_loss
 
 def compute_spine_loss(poses):
+    """
+    计算脊柱姿势的损失
     
+    参数:
+    poses: 姿势参数张量
+    
+    返回:
+    spine_loss: 脊柱姿势的L2范数损失
+    """
     spine_indices = range(17, 25)
     
     spine_poses = poses[:, spine_indices]
@@ -17,7 +33,15 @@ def compute_spine_loss(poses):
     return spine_loss
 
 def compute_pose_loss(poses, pose_init):
+    """
+    计算整体姿势的损失（不包括全局旋转）
     
+    参数:
+    poses: 姿势参数张量
+    
+    返回:
+    pose_loss: 整体姿势的L2范数损失
+    """
     pose_loss = torch.linalg.norm(poses[:, 3:], ord=2) # The global rotation should not be constrained
     return pose_loss
 
@@ -32,7 +56,15 @@ def compute_anchor_trans(trans, trans_init):
     return trans_loss 
 
 def compute_time_loss(poses):
+    """
+    计算相邻帧之间姿势变化的损失
     
+    参数:
+    poses: 姿势参数张量
+    
+    返回:
+    time_loss: 相邻帧姿势差异的L2范数损失
+    """
     pose_delta = poses[1:] - poses[:-1]
     time_loss = torch.linalg.norm(pose_delta, ord=2)
     return time_loss
